@@ -1,0 +1,86 @@
+version: 2.1
+orbs:
+  gcp-cli: circleci/gcp-cli@1.8.3
+
+jobs:
+  build:
+    docker:
+      - image: google/cloud-sdk:latest
+
+    steps:
+      - gcp-cli/initialize
+      - run:
+          name: Create SSH Key
+          command: |
+            gcloud compute ssh centos@${REDMINE_INSTANCE_NAME} \
+            --command "cat /etc/redhat-release" \
+            --zone=asia-northeast1-b \
+            --quiet
+      - run:
+          name: Install Ansible
+          command: |
+            pip install ansible
+      - run:
+          name: Create Redmine backup data 
+          command: |
+            # Retrieve Ansible playbook
+            git clone https://github.com/ansible-playbooks-centos7/redmine_create-backup.git
+
+            # Set Strict host key checking no
+            echo "StrictHostKeyChecking no" > ~/.ssh/config
+
+            # Get external Ip addr
+            ip_addr=$(
+                       gcloud compute instances describe redmine \
+                       --format='get(networkInterfaces[0].accessConfigs[0].natIP)' \
+                       --zone=asia-northeast1-b \
+                     )
+
+            # Execute Ansible ad-hoc
+            cd redmine_create-backup
+            ansible-playbook -i ${ip_addr}, \
+            -u centos \
+            --key-file="~/.ssh/google_compute_engine" \
+            create-backup.yml
+      - run:
+          name: Put backup data to S3
+          command: |
+            # Retrieve Ansible playbook
+            git clone https://github.com/ansible-playbooks-centos7/aws-s3.git
+
+            # Set Strict host key checking no
+            echo "StrictHostKeyChecking no" > ~/.ssh/config
+
+            # Get external Ip addr
+            ip_addr=$(
+                       gcloud compute instances describe redmine \
+                       --format='get(networkInterfaces[0].accessConfigs[0].natIP)' \
+                       --zone=asia-northeast1-b \
+                     )
+
+            # Execute Ansible Playbook
+            cd aws-s3
+            ansible-galaxy install -r roles/requirements.yml
+
+            ansible-playbook -i ${ip_addr}, \
+            -u centos \
+            --key-file="~/.ssh/google_compute_engine" \
+            -e "aws_access_key_id=${AWS_ACCESS_KEY_ID}" \
+            -e "aws_secret_access_key=${AWS_SECRET_ACCESS_KEY}" \
+            -e "aws_region=${AWS_REGION}" \
+            -e 's3_bucket=tomonorimatsumura2' \
+            -e 's3_object_name=redmine-backup.tar.gz' \
+            -e 'upload_file_path=/tmp/redmine-backup/redmine-backup.tar.gz' \
+            put.yml
+      - run:
+          name: Stop instance
+          command: |
+            gcloud compute instances stop ${REDMINE_INSTANCE_NAME} \
+            --zone=asia-northeast1-b
+
+workflows:
+  version: 2
+  start-redmine:
+    jobs:
+      - build:
+          context: GCP
