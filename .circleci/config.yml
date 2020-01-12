@@ -8,6 +8,7 @@ jobs:
       - image: google/cloud-sdk:latest
 
     steps:
+      - checkout
       - gcp-cli/initialize
       - run:
           name: Create SSH Key
@@ -21,7 +22,7 @@ jobs:
           command: |
             pip install ansible
       - run:
-          name: Create Redmine backup data 
+          name: Create Redmine backup data
           command: |
             # Retrieve Ansible playbook
             git clone https://github.com/ansible-playbooks-centos7/redmine_create-backup.git
@@ -77,6 +78,19 @@ jobs:
           command: |
             gcloud compute instances stop ${REDMINE_INSTANCE_NAME} \
             --zone=asia-northeast1-b
+      - run:
+          name: Install Tweepy
+          command: |
+            pip install tweepy
+      - run:
+          name: Send notifcation
+          command: |
+            python tweet.py \
+            ${TWITTER_CONSUMER_KEY} \
+            ${TWITTER_CONSUMER_SECRET_KEY} \
+            ${TWITTER_ACCESS_TOKEN} \
+            ${TWITTER_ACCESS_TOKEN_SECRET} \
+            ${TWITTER_RECIPIENT}
 
 workflows:
   version: 2
