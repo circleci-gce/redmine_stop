@@ -70,9 +70,9 @@ jobs:
             -e "aws_access_key_id=${AWS_ACCESS_KEY_ID}" \
             -e "aws_secret_access_key=${AWS_SECRET_ACCESS_KEY}" \
             -e "aws_region=${AWS_REGION}" \
-            -e 's3_bucket=tomonorimatsumura2' \
-            -e 's3_object_name=redmine-backup.tar.gz' \
-            -e 'upload_file_path=/tmp/redmine-backup/redmine-backup.tar.gz' \
+            -e "s3_bucket=${S3_BUCKET_NAME}" \
+            -e "s3_object_name=${S3_OBJECT_NAME}" \
+            -e "upload_file_path=${UPLOAD_FILE_PATH}" \
             put.yml
       - run:
           name: Stop instance
