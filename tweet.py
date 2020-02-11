@@ -14,6 +14,7 @@ api = tweepy.API(auth)
 # Create message body
 URL = os.environ['CIRCLE_BUILD_URL']
 message = 'CircleCI stopped VM instance' + '\n\n' \
+          + 'Instance Name: Redmine' + '\n\n' \
           + URL
 
 # Send direct message
