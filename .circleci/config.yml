@@ -2,6 +2,14 @@ version: 2.1
 orbs:
   gcp-cli: circleci/gcp-cli@1.8.3
 
+parameters:
+  instance-name:
+    type: string 
+    default: ""
+  zone:
+    type: string 
+    default: "asia-northeast1-b"
+
 jobs:
   build:
     docker:
@@ -13,9 +21,9 @@ jobs:
       - run:
           name: Create SSH Key
           command: |
-            gcloud compute ssh centos@${REDMINE_INSTANCE_NAME} \
+            gcloud compute ssh centos@<< pipeline.parameters.instance-name >> \
             --command "cat /etc/redhat-release" \
-            --zone=asia-northeast1-b \
+            --zone=<< pipeline.parameters.zone >> \
             --quiet
       - run:
           name: Install Ansible
@@ -33,9 +41,9 @@ jobs:
 
             # Get external Ip addr
             ip_addr=$(
-                       gcloud compute instances describe redmine \
+                       gcloud compute instances describe << pipeline.parameters.instance-name >> \
                        --format='get(networkInterfaces[0].accessConfigs[0].natIP)' \
-                       --zone=asia-northeast1-b \
+                       --zone=<< pipeline.parameters.zone >> \
                      )
 
             # Execute Ansible ad-hoc
@@ -55,9 +63,9 @@ jobs:
 
             # Get external Ip addr
             ip_addr=$(
-                       gcloud compute instances describe redmine \
+                       gcloud compute instances describe << pipeline.parameters.instance-name >> \
                        --format='get(networkInterfaces[0].accessConfigs[0].natIP)' \
-                       --zone=asia-northeast1-b \
+                       --zone=<< pipeline.parameters.zone >> \
                      )
 
             # Execute Ansible Playbook
@@ -77,8 +85,8 @@ jobs:
       - run:
           name: Stop instance
           command: |
-            gcloud compute instances stop ${REDMINE_INSTANCE_NAME} \
-            --zone=asia-northeast1-b
+            gcloud compute instances stop << pipeline.parameters.instance-name >> \
+            --zone=<< pipeline.parameters.zone >>
       - run:
           name: Install Tweepy
           command: |
