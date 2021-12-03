@@ -41,7 +41,7 @@ jobs:
           name: Install Ansible
           command: |
             export PIP=$(which pip pip3 | head -1)
-            $PIP install ansible
+            $PIP install ansible==4.9.0
       - run:
           name: Create Redmine backup data
           command: |
@@ -115,7 +115,7 @@ jobs:
             ${TWITTER_CONSUMER_SECRET_KEY} \
             ${TWITTER_ACCESS_TOKEN} \
             ${TWITTER_ACCESS_TOKEN_SECRET} \
-            ${TWITTER_RECIPIENT}
+            ${TWITTER_RECIPIENT} \
 
 workflows:
   version: 2
