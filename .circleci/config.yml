@@ -25,7 +25,7 @@ parameters:
 jobs:
   build:
     docker:
-      - image: google/cloud-sdk:debian_component_based
+      - image: cimg/gcp:2022.11.1
 
     steps:
       - checkout
@@ -37,11 +37,6 @@ jobs:
             --command "cat /etc/redhat-release" \
             --zone=<< pipeline.parameters.zone >> \
             --quiet
-      - run:
-          name: Install Ansible
-          command: |
-            export PIP=$(which pip pip3 | head -1)
-            $PIP install ansible==4.9.0
       - run:
           name: Create Redmine backup data
           command: |
