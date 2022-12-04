@@ -31,6 +31,15 @@ jobs:
       - checkout
       - gcp-cli/initialize
       - run:
+          name: Upgrade Ansible
+          command: |
+            pip install --upgrade ansible
+      - run:
+          name: Show Ansible version
+          command: |
+            ansible --version
+            ansible-community --version
+      - run:
           name: Create SSH Key
           command: |
             gcloud compute ssh centos@<< pipeline.parameters.instance-name >> \
