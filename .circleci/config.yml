@@ -131,4 +131,5 @@ workflows:
       - build:
           context:
             - AWS_OPENID_CONNECT_TOKENS
-            - GCP
+            - GOOGLE_CLOUD_IAM
+            - TWITTER_API
