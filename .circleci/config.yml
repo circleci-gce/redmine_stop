@@ -1,5 +1,6 @@
 version: 2.1
 orbs:
+  aws-cli: circleci/aws-cli@3.1.4
   gcp-cli: circleci/gcp-cli@1.8.4
 
 parameters:
@@ -29,6 +30,11 @@ jobs:
 
     steps:
       - checkout
+      - aws-cli/setup:
+          profile-name: default
+          role-arn: ${AWS_ROLE_ARN}
+          role-session-name: CircleCI_circleci-gce_redmine-stop
+          session-duration: '3600'
       - gcp-cli/initialize
       - run:
           name: Upgrade Ansible
@@ -91,14 +97,11 @@ jobs:
             ansible-playbook -i ${ip_addr}, \
             -u centos \
             --key-file="~/.ssh/google_compute_engine" \
-            -e "aws_access_key_id=${AWS_ACCESS_KEY_ID}" \
-            -e "aws_secret_access_key=${AWS_SECRET_ACCESS_KEY}" \
-            -e "aws_region=${AWS_REGION}" \
             -e "pip_executable=<< pipeline.parameters.pip-executable >>" \
             -e "pip_package=<< pipeline.parameters.pip-package >>" \
             -e "s3_bucket=<< pipeline.parameters.s3-bucket-name >>" \
             -e "s3_object_name=<< pipeline.parameters.s3-object-name >>" \
-            -e "upload_file_path=${UPLOAD_FILE_PATH}" \
+            -e "upload_file_path=/tmp/redmine-backup/redmine-backup.tar.gz" \
             put.yml
       - run:
           name: Stop instance
@@ -126,4 +129,6 @@ workflows:
   stop-redmine:
     jobs:
       - build:
-          context: GCP
+          context:
+            - AWS_OPENID_CONNECT_TOKENS
+            - GCP
