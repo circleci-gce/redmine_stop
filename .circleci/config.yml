@@ -13,12 +13,6 @@ parameters:
   pip-package:
     type: string
     default: ""
-  s3-bucket-name:
-    type: string
-    default: ""
-  s3-object-name:
-    type: string
-    default: ""
   zone:
     type: string
     default: ""
@@ -56,7 +50,7 @@ jobs:
           name: Create Redmine backup data
           command: |
             # Retrieve Ansible playbook
-            git clone https://github.com/ansible-playbooks-centos7/redmine_create-backup.git
+            git clone https://github.com/ansible-playbooks-mamono210/redmine_create-backup.git
 
             # Set Strict host key checking no
             echo "StrictHostKeyChecking no" > ~/.ssh/config
@@ -68,8 +62,11 @@ jobs:
                        --zone=<< pipeline.parameters.zone >> \
                      )
 
-            # Execute Ansible ad-hoc
+            # Install dependencies
             cd redmine_create-backup
+            ansible-galaxy install -r roles/requirements.yml
+
+            # Execute Ansible playbook
             ansible-playbook -i ${ip_addr}, \
             -u centos \
             --key-file="~/.ssh/google_compute_engine" \
@@ -78,7 +75,7 @@ jobs:
           name: Put backup data to S3
           command: |
             # Retrieve Ansible playbook
-            git clone https://github.com/ansible-playbooks-centos7/aws-s3.git
+            git clone https://github.com/ansible-playbooks-mamono210/aws-s3.git
 
             # Set Strict host key checking no
             echo "StrictHostKeyChecking no" > ~/.ssh/config
@@ -90,39 +87,47 @@ jobs:
                        --zone=<< pipeline.parameters.zone >> \
                      )
 
-            # Execute Ansible Playbook
+            # Install dependencies
             cd aws-s3
             ansible-galaxy install -r roles/requirements.yml
 
+            # Upload archived media file
             ansible-playbook -i ${ip_addr}, \
             -u centos \
             --key-file="~/.ssh/google_compute_engine" \
             -e "pip_executable=<< pipeline.parameters.pip-executable >>" \
             -e "pip_package=<< pipeline.parameters.pip-package >>" \
-            -e "s3_bucket=<< pipeline.parameters.s3-bucket-name >>" \
-            -e "s3_object_name=<< pipeline.parameters.s3-object-name >>" \
-            -e "upload_file_path=/tmp/redmine-backup/redmine-backup.tar.gz" \
+            -e "s3_bucket=mamono210" \
+            -e "s3_object_name=circleci-gce/redmine/stop/files.tar.gz" \
+            -e "upload_file_path=/tmp/redmine-backup/files.tar.gz" \
+            put.yml
+
+            # Upload archived git file
+            ansible-playbook -i ${ip_addr}, \
+            -u centos \
+            --key-file="~/.ssh/google_compute_engine" \
+            -e "pip_executable=<< pipeline.parameters.pip-executable >>" \
+            -e "pip_package=<< pipeline.parameters.pip-package >>" \
+            -e "s3_bucket=mamono210" \
+            -e "s3_object_name=circleci-gce/redmine/stop/git.tar.gz" \
+            -e "upload_file_path=/tmp/redmine-backup/git.tar.gz" \
+            put.yml
+
+            # Upload archived PostgreSQL dumped data file
+            ansible-playbook -i ${ip_addr}, \
+            -u centos \
+            --key-file="~/.ssh/google_compute_engine" \
+            -e "pip_executable=<< pipeline.parameters.pip-executable >>" \
+            -e "pip_package=<< pipeline.parameters.pip-package >>" \
+            -e "s3_bucket=mamono210" \
+            -e "s3_object_name=circleci-gce/redmine/stop/redmine.psql.tar.gz" \
+            -e "upload_file_path=/tmp/redmine-backup/redmine.psql.tar.gz" \
             put.yml
       - run:
           name: Stop instance
           command: |
             gcloud compute instances stop << pipeline.parameters.instance-name >> \
             --zone=<< pipeline.parameters.zone >>
-      - run:
-          name: Install Tweepy
-          command: |
-            export PIP=$(which pip pip3 | head -1)
-            $PIP install tweepy --upgrade
-      - run:
-          name: Send notifcation
-          command: |
-            export PYTHON=$(which python python3 | tail -1)
-            $PYTHON tweet.py \
-            ${TWITTER_CONSUMER_KEY} \
-            ${TWITTER_CONSUMER_SECRET_KEY} \
-            ${TWITTER_ACCESS_TOKEN} \
-            ${TWITTER_ACCESS_TOKEN_SECRET} \
-            ${TWITTER_RECIPIENT} \
 
 workflows:
   version: 2
@@ -132,4 +137,3 @@ workflows:
           context:
             - AWS_OPENID_CONNECT_TOKENS
             - GOOGLE_CLOUD_IAM
-            - TWITTER_API
