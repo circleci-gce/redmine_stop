@@ -120,8 +120,8 @@ jobs:
             -e "pip_executable=<< pipeline.parameters.pip-executable >>" \
             -e "pip_package=<< pipeline.parameters.pip-package >>" \
             -e "s3_bucket=mamono210" \
-            -e "s3_object_name=circleci-gce/redmine/stop/redmine.psql.tar.gz" \
-            -e "upload_file_path=/tmp/redmine-backup/redmine.psql.tar.gz" \
+            -e "s3_object_name=circleci-gce/redmine/stop/redmine.psql" \
+            -e "upload_file_path=/tmp/redmine-backup/redmine.psql" \
             put.yml
       - run:
           name: Stop instance
