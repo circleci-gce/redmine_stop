@@ -1,7 +1,7 @@
 version: 2.1
 orbs:
   aws-cli: circleci/aws-cli@3.1.4
-  gcp-cli: circleci/gcp-cli@1.8.4
+  gcp-cli: circleci/gcp-cli@3.1.1
 
 parameters:
   instance-name:
@@ -20,7 +20,7 @@ parameters:
 jobs:
   build:
     docker:
-      - image: cimg/gcp:2022.11.1
+      - image: ghcr.io/docker-images-mamono210/circleci-executors/ansible:latest
 
     steps:
       - checkout
@@ -29,11 +29,7 @@ jobs:
           role-arn: ${AWS_ROLE_ARN}
           role-session-name: CircleCI_circleci-gce_redmine-stop
           session-duration: '3600'
-      - gcp-cli/initialize
-      - run:
-          name: Upgrade Ansible
-          command: |
-            pip install --upgrade ansible
+      - gcp-cli/setup
       - run:
           name: Show Ansible version
           command: |
