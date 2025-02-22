@@ -67,6 +67,7 @@ jobs:
             -u centos \
             --key-file="~/.ssh/google_compute_engine" \
             create-backup.yml
+          no_output_timeout: 30m
       - run:
           name: Put backup data to S3
           command: |
@@ -119,6 +120,7 @@ jobs:
             -e "s3_object_name=circleci-gce/redmine/stop/redmine.sql" \
             -e "upload_file_path=/tmp/redmine-backup/redmine.sql" \
             put.yml
+          no_output_timeout: 30m
       - run:
           name: Stop instance
           command: |
