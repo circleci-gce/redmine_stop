@@ -49,6 +49,27 @@ jobs:
           role-arn: ${AWS_ROLE_ARN}
           role-session-name: CircleCI_circleci-gce_redmine-stop
           session-duration: "3600"
+
+      - run:
+          name: Verify AWS role for backup
+          command: |
+            set -euo pipefail
+            cve_expected_role="arn:aws:iam::808683561341:role/CircleCI_OIDC_circleci-gce"
+            if [ "${AWS_ROLE_ARN:-}" != "$cve_expected_role" ]; then
+              echo "STOP: AWS_ROLE_ARN does not match the checked role."
+              exit 1
+            fi
+            cve_caller_arn="$(aws sts get-caller-identity --query Arn --output text --no-cli-pager)"
+            case "$cve_caller_arn" in
+              arn:aws:sts::808683561341:assumed-role/CircleCI_OIDC_circleci-gce/*)
+                echo AWS_ROLE_CHECK=PASS
+                ;;
+              *)
+                echo "STOP: Active AWS identity does not match the checked role."
+                exit 1
+                ;;
+            esac
+
       - gcp-cli/setup
 
       - run:
