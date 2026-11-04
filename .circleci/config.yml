@@ -1,35 +1,64 @@
 version: 2.1
+
 orbs:
   aws-cli: circleci/aws-cli@3.1.4
   gcp-cli: circleci/gcp-cli@3.1.1
 
 parameters:
+  run-mitigation-test:
+    type: boolean
+    default: false
   instance-name:
     type: string
-    default: ""
-  pip-executable:
-    type: string
-    default: ""
-  pip-package:
-    type: string
-    default: ""
+    default: redmica2-south-carolina
   zone:
     type: string
-    default: ""
+    default: us-east1-d
+  pip-executable:
+    type: string
+    default: /usr/bin/pip3
+  pip-package:
+    type: string
+    default: python3-pip
 
 jobs:
   build:
     docker:
       - image: ghcr.io/docker-images-mamono210/circleci-executors/ansible:latest
+    environment:
+      CVE_PROJECT: buoyant-world-263612
+      CVE_INSTANCE: << pipeline.parameters.instance-name >>
+      CVE_ZONE: << pipeline.parameters.zone >>
+      CVE_PIP_EXECUTABLE: << pipeline.parameters.pip-executable >>
+      CVE_PIP_PACKAGE: << pipeline.parameters.pip-package >>
+      CVE_S3_PREFIX: circleci-gce/redmine/issue5505-test/20261104-R01
 
     steps:
       - checkout
+      - run:
+          name: Check trial parameters
+          command: |
+            set -euo pipefail
+            test "$CVE_INSTANCE" = redmica2-south-carolina
+            test "$CVE_ZONE" = us-east1-d
+            test "$CVE_PIP_EXECUTABLE" = /usr/bin/pip3
+            test "$CVE_PIP_PACKAGE" = python3-pip
+
       - aws-cli/setup:
           profile-name: default
           role-arn: ${AWS_ROLE_ARN}
           role-session-name: CircleCI_circleci-gce_redmine-stop
           session-duration: "3600"
       - gcp-cli/setup
+
+      - run:
+          name: Verify target instance
+          command: |
+            set -euo pipefail
+            cve_instance_id="$(gcloud compute instances describe "$CVE_INSTANCE" \
+              --project="$CVE_PROJECT" --zone="$CVE_ZONE" --format='value(id)')"
+            test "$cve_instance_id" = 7213092591087619377
+            printf 'TARGET_INSTANCE_ID=%s\n' "$cve_instance_id"
 
       - run:
           name: Show Ansible version
@@ -40,71 +69,82 @@ jobs:
       - run:
           name: Create SSH Key
           command: |
-            gcloud compute ssh centos@<< pipeline.parameters.instance-name >> \
+            set -euo pipefail
+            gcloud compute ssh "centos@$CVE_INSTANCE" \
+              --project="$CVE_PROJECT" \
               --command "cat /etc/redhat-release" \
-              --zone=<< pipeline.parameters.zone >> \
-              --quiet
+              --zone="$CVE_ZONE" --quiet
 
       - run:
           name: Prepare connection info (ip_addr) once
           command: |
-            # Set Strict host key checking no (once)
+            set -euo pipefail
             mkdir -p ~/.ssh
             echo "StrictHostKeyChecking no" > ~/.ssh/config
+            ip_addr="$(gcloud compute instances describe "$CVE_INSTANCE" \
+              --project="$CVE_PROJECT" --zone="$CVE_ZONE" \
+              --format='get(networkInterfaces[0].accessConfigs[0].natIP)')"
+            test -n "$ip_addr"
+            printf '%s\n' "$ip_addr" > /tmp/ip_addr
 
-            # Get external Ip addr (once)
-            ip_addr=$(
-              gcloud compute instances describe << pipeline.parameters.instance-name >> \
-                --format='get(networkInterfaces[0].accessConfigs[0].natIP)' \
-                --zone=<< pipeline.parameters.zone >>
-            )
-
-            # Persist for later steps
-            echo "${ip_addr}" > /tmp/ip_addr
-            echo "ip_addr=${ip_addr}"
+      - run:
+          name: Verify mitigation before backup
+          command: |
+            set -euo pipefail
+            ip_addr="$(cat /tmp/ip_addr)"
+            test -n "$ip_addr"
+            ssh -o BatchMode=yes -o ConnectTimeout=10 \
+              -i "$HOME/.ssh/google_compute_engine" "centos@$ip_addr" '
+              set -eu
+              test "$(hostname -s)" = redmica2-south-carolina
+              sudo -n systemctl is-active --quiet cve-2026-98432-mitigation.service
+              cve_start="$(sudo -n systemctl show cve-2026-98432-mitigation.service -p ExecMainStartTimestampMonotonic --value)"
+              case "$cve_start" in ""|0|*[!0-9]*) exit 1 ;; esac
+              test -r /proc/sys/kernel/random/boot_id
+              cat /proc/sys/kernel/random/boot_id
+              printf "SERVICE_START=%s\n" "$cve_start"
+              sudo -n nft --stateless list table inet cve_2026_98432
+            ' > /tmp/issue5505-before
+            test -s /tmp/issue5505-before
+            cat /tmp/issue5505-before
+            date -u '+%Y-%m-%dT%H:%M:%SZ'
+            echo MITIGATION_BEFORE_BACKUP_PASS
 
       - run:
           name: Create Redmine backup data
           command: |
+            set -euo pipefail
             ip_addr="$(cat /tmp/ip_addr)"
-
-            # Retrieve Ansible playbook
             git clone https://github.com/ansible-playbooks-mamono210/redmine_create-backup.git
-
-            # Install dependencies
             cd redmine_create-backup
+            git rev-parse HEAD
             ansible-galaxy install -r roles/requirements.yml
-
-            # Execute Ansible playbook
-            ansible-playbook -i ${ip_addr}, \
-              -u centos \
-              --key-file="~/.ssh/google_compute_engine" \
+            ansible-playbook -i "${ip_addr}," \
+              -u centos --key-file="$HOME/.ssh/google_compute_engine" \
               create-backup.yml
           no_output_timeout: 30m
 
       - run:
           name: Prepare S3 upload playbook (once)
           command: |
-            # Retrieve Ansible playbook
+            set -euo pipefail
             git clone https://github.com/ansible-playbooks-mamono210/aws-s3.git
-
-            # Install dependencies
             cd aws-s3
+            git rev-parse HEAD
             ansible-galaxy install -r roles/requirements.yml
 
       - run:
           name: Upload archived media file to S3
           command: |
+            set -euo pipefail
             ip_addr="$(cat /tmp/ip_addr)"
             cd aws-s3
-
-            ansible-playbook -i ${ip_addr}, \
-              -u centos \
-              --key-file="~/.ssh/google_compute_engine" \
-              -e "pip_executable=<< pipeline.parameters.pip-executable >>" \
-              -e "pip_package=<< pipeline.parameters.pip-package >>" \
+            ansible-playbook -i "${ip_addr}," \
+              -u centos --key-file="$HOME/.ssh/google_compute_engine" \
+              -e "pip_executable=$CVE_PIP_EXECUTABLE" \
+              -e "pip_package=$CVE_PIP_PACKAGE" \
               -e "s3_bucket=mamono210" \
-              -e "s3_object_name=circleci-gce/redmine/stop/files.tar.gz" \
+              -e "s3_object_name=$CVE_S3_PREFIX/files.tar.gz" \
               -e "upload_file_path=/tmp/redmine-backup/files.tar.gz" \
               put.yml
           no_output_timeout: 30m
@@ -112,16 +152,15 @@ jobs:
       - run:
           name: Upload archived git file to S3
           command: |
+            set -euo pipefail
             ip_addr="$(cat /tmp/ip_addr)"
             cd aws-s3
-
-            ansible-playbook -i ${ip_addr}, \
-              -u centos \
-              --key-file="~/.ssh/google_compute_engine" \
-              -e "pip_executable=<< pipeline.parameters.pip-executable >>" \
-              -e "pip_package=<< pipeline.parameters.pip-package >>" \
+            ansible-playbook -i "${ip_addr}," \
+              -u centos --key-file="$HOME/.ssh/google_compute_engine" \
+              -e "pip_executable=$CVE_PIP_EXECUTABLE" \
+              -e "pip_package=$CVE_PIP_PACKAGE" \
               -e "s3_bucket=mamono210" \
-              -e "s3_object_name=circleci-gce/redmine/stop/git.tar.gz" \
+              -e "s3_object_name=$CVE_S3_PREFIX/git.tar.gz" \
               -e "skip_bootstrap=true" \
               -e "upload_file_path=/tmp/redmine-backup/git.tar.gz" \
               put.yml
@@ -130,32 +169,52 @@ jobs:
       - run:
           name: Upload archived PostgreSQL dump to S3
           command: |
+            set -euo pipefail
             ip_addr="$(cat /tmp/ip_addr)"
             cd aws-s3
-
-            ansible-playbook -i ${ip_addr}, \
-              -u centos \
-              --key-file="~/.ssh/google_compute_engine" \
-              -e "pip_executable=<< pipeline.parameters.pip-executable >>" \
-              -e "pip_package=<< pipeline.parameters.pip-package >>" \
+            ansible-playbook -i "${ip_addr}," \
+              -u centos --key-file="$HOME/.ssh/google_compute_engine" \
+              -e "pip_executable=$CVE_PIP_EXECUTABLE" \
+              -e "pip_package=$CVE_PIP_PACKAGE" \
               -e "s3_bucket=mamono210" \
-              -e "s3_object_name=circleci-gce/redmine/stop/redmine.sql" \
+              -e "s3_object_name=$CVE_S3_PREFIX/redmine.sql" \
               -e "skip_bootstrap=true" \
               -e "upload_file_path=/tmp/redmine-backup/redmine.sql" \
               put.yml
           no_output_timeout: 30m
 
       - run:
-          name: Stop instance
+          name: Verify mitigation after upload
           command: |
-            gcloud compute instances stop << pipeline.parameters.instance-name >> \
-              --zone=<< pipeline.parameters.zone >>
+            set -euo pipefail
+            ip_addr="$(cat /tmp/ip_addr)"
+            test -n "$ip_addr"
+            ssh -o BatchMode=yes -o ConnectTimeout=10 \
+              -i "$HOME/.ssh/google_compute_engine" "centos@$ip_addr" '
+              set -eu
+              test "$(hostname -s)" = redmica2-south-carolina
+              sudo -n systemctl is-active --quiet cve-2026-98432-mitigation.service
+              cve_start="$(sudo -n systemctl show cve-2026-98432-mitigation.service -p ExecMainStartTimestampMonotonic --value)"
+              case "$cve_start" in ""|0|*[!0-9]*) exit 1 ;; esac
+              test -r /proc/sys/kernel/random/boot_id
+              cat /proc/sys/kernel/random/boot_id
+              printf "SERVICE_START=%s\n" "$cve_start"
+              sudo -n nft --stateless list table inet cve_2026_98432
+            ' > /tmp/issue5505-after
+            test -s /tmp/issue5505-after
+            cmp /tmp/issue5505-before /tmp/issue5505-after
+            cat /tmp/issue5505-after
+            date -u '+%Y-%m-%dT%H:%M:%SZ'
+            echo MITIGATION_AFTER_UPLOAD_PASS
 
 workflows:
-  version: 2
-  stop-redmine:
+  mitigation-backup-test:
+    when: << pipeline.parameters.run-mitigation-test >>
     jobs:
       - build:
           context:
             - AWS_OPENID_CONNECT_TOKENS
             - GOOGLE_CLOUD_IAM
+          filters:
+            branches:
+              only: test/issue5505-backup-r01
