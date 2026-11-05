@@ -199,7 +199,10 @@ class BackupTrial(iap.Trial):
     def ansible_environment(self):
         # Remove inherited Ansible overrides, then explicitly configure no_log.
         env = {key: value for key, value in os.environ.items() if not key.startswith("ANSIBLE_")}
-        env.update(ANSIBLE_CONFIG=str(self.work / "ansible.cfg"), ANSIBLE_NO_LOG="true",
+        # The shared trial uses LC_ALL=C. Override it for every Ansible child,
+        # including syntax checks and both backup/upload playbooks.
+        env.update(LC_ALL="C.UTF-8", LANG="C.UTF-8",
+                   ANSIBLE_CONFIG=str(self.work / "ansible.cfg"), ANSIBLE_NO_LOG="true",
                    ANSIBLE_DEBUG="false", ANSIBLE_VERBOSITY="0", ANSIBLE_DISPLAY_ARGS_TO_STDOUT="false",
                    ANSIBLE_ROLES_PATH=str(self.deps / "roles"), ANSIBLE_HOST_KEY_CHECKING="true",
                    ANSIBLE_NO_TARGET_SYSLOG="true", ANSIBLE_FORCE_COLOR="false")

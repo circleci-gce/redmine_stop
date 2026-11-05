@@ -17,6 +17,7 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import issue5505_iap_backup as b
 import issue5505_iap_ssh as iap
+import issue5505_ansible_diagnostics as diagnostics
 import test_issue5505_iap_ssh as existing
 
 
@@ -102,6 +103,34 @@ class BackupSafetyTests(unittest.TestCase):
         self.assertEqual(env["ANSIBLE_DEBUG"], "false")
         self.assertNotIn("ANSIBLE_PRIVATE_KEY", env)
         self.assertNotIn("ANSIBLE_LOG_PATH", env)
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux CI executor locale check")
+    def test_ansible_children_initialize_utf8_with_c_locale_parent(self):
+        trial = b.BackupTrial(self.work)
+        trial.deps = self.work / "deps"
+        # Match Ansible's locale initialization, without relying on Python's
+        # automatic UTF-8 mode or locale coercion to hide a non-UTF-8 setting.
+        command = [sys.executable, "-c", "import json, locale, sys; "
+                   "locale.setlocale(locale.LC_ALL, ''); "
+                   "print(json.dumps([locale.getlocale()[1], sys.getfilesystemencoding()]))"]
+        with patch.dict(os.environ, {"LC_ALL": "C", "LANG": "C"}):
+            environments = {
+                "original_c_locale": dict(os.environ),
+                "diagnostics": diagnostics.diagnostic_environment(self.work / "ansible.cfg"),
+                "playbooks": trial.ansible_environment(),
+            }
+        for name, env in environments.items():
+            with self.subTest(child=name):
+                env.update(PYTHONUTF8="0", PYTHONCOERCECLOCALE="0")
+                result = subprocess.run(command, env=env, stdin=subprocess.DEVNULL,
+                                        capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                encoding, filesystem = json.loads(result.stdout)
+                if name == "original_c_locale":
+                    self.assertIsNone(encoding)
+                else:
+                    self.assertEqual(encoding.lower(), "utf-8")
+                    self.assertEqual(filesystem.lower(), "utf-8")
 
     def test_wrong_branch_fails_before_aws_or_metadata(self):
         trial = b.BackupTrial(self.work)

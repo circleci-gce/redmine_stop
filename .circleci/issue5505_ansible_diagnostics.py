@@ -38,7 +38,8 @@ def diagnostic_environment(config):
     # Preserve HOME/PATH to find the image's user-installed Ansible collections.
     # Use a private config and empty cwd, without inventory, playbooks or cloud env.
     env = {k: os.environ[k] for k in ("HOME", "PATH", "TMPDIR") if k in os.environ}
-    env.update(LC_ALL="C", TZ="UTC", PYTHONDONTWRITEBYTECODE="1",
+    # Ansible checks the locale encoding at startup; the C locale is not UTF-8.
+    env.update(LC_ALL="C.UTF-8", LANG="C.UTF-8", TZ="UTC", PYTHONDONTWRITEBYTECODE="1",
                ANSIBLE_CONFIG=str(config), ANSIBLE_DEBUG="false",
                ANSIBLE_VERBOSITY="0", ANSIBLE_FORCE_COLOR="false",
                ANSIBLE_NOCOLOR="true")
@@ -103,7 +104,8 @@ def check_modules(timeout=60):
             ready = ready and valid
             if module == "amazon.aws.s3_object":
                 owner_check = valid and "expected_bucket_owner" in options
-                print("S3_EXPECTED_BUCKET_OWNER_SUPPORTED=" + ("YES" if owner_check else "NO"), flush=True)
+                owner_status = ("YES" if owner_check else "NO") if valid else "UNKNOWN"
+                print("S3_EXPECTED_BUCKET_OWNER_SUPPORTED=" + owner_status, flush=True)
                 ready = ready and owner_check
         print("ANSIBLE_DEPENDENCY_CHECK=" + ("PASS" if ready else "FAIL"), flush=True)
         return ready

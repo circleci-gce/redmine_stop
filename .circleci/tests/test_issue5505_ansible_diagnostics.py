@@ -65,6 +65,7 @@ class AnsibleDiagnosticsTests(unittest.TestCase):
         value = self.output.getvalue()
         self.assertIn("Unable to load amazon.aws.s3_object", value)
         self.assertIn("ANSIBLE_MODULE=amazon.aws.s3_object RESULT=FAIL", value)
+        self.assertIn("S3_EXPECTED_BUCKET_OWNER_SUPPORTED=UNKNOWN", value)
         self.assertNotIn("synthetic-secret-719", value)
         self.assertNotIn("ANSIBLE_DEPENDENCY_CHECK=PASS", value)
 
@@ -75,7 +76,11 @@ class AnsibleDiagnosticsTests(unittest.TestCase):
     def test_invalid_json_or_missing_owner_check_fails_closed(self):
         for options in ({"malformed": True}, {"missing_owner": True}):
             with self.subTest(options=options):
+                self.output.seek(0)
+                self.output.truncate(0)
                 self.assertFalse(self.simulate(**options))
+                expected = "UNKNOWN" if options.get("malformed") else "NO"
+                self.assertIn("S3_EXPECTED_BUCKET_OWNER_SUPPORTED=" + expected, self.output.getvalue())
 
     def test_probe_executes_with_clean_environment_and_retains_error_reason(self):
         with tempfile.TemporaryDirectory() as directory:
