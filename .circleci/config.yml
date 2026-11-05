@@ -1,9 +1,13 @@
 version: 2.1
 
 orbs:
+  aws-cli: circleci/aws-cli@3.1.4
   gcp-cli: circleci/gcp-cli@3.1.1
 
 parameters:
+  run-iap-backup-test:
+    type: boolean
+    default: false
   run-iap-ssh-test:
     type: boolean
     default: false
@@ -145,6 +149,36 @@ jobs:
             set -euo pipefail
             python3 .circleci/issue5505_iap_ssh.py --run
 
+  iap-backup-check:
+    docker:
+      - image: ghcr.io/docker-images-mamono210/circleci-executors/ansible:latest
+    environment:
+      CVE_PROJECT: buoyant-world-263612
+      CVE_ZONE: us-east1-d
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - checkout
+      - run:
+          name: Check backup trial branch and offline tests
+          command: |
+            set -euo pipefail
+            test "$CIRCLE_BRANCH" = test/issue5505-iap-backup-r01
+            python3 -m unittest discover -s .circleci/tests -p 'test_issue5505_*.py'
+      - aws-cli/setup:
+          profile-name: default
+          role-arn: ${AWS_ROLE_ARN}
+          role-session-name: CircleCI_issue5505_iap_backup
+          session-duration: "3600"
+      - gcp-cli/setup:
+          google_project_id: CVE_PROJECT
+          google_compute_zone: CVE_ZONE
+      - run:
+          name: IAP backup, S3 verification and temporary key cleanup
+          no_output_timeout: 5m
+          command: |
+            set -euo pipefail
+            python3 .circleci/issue5505_iap_backup.py --run
+
 workflows:
   iap-connectivity-test:
     when: << pipeline.parameters.run-iap-connectivity-test >>
@@ -165,3 +199,14 @@ workflows:
           filters:
             branches:
               only: test/issue5505-iap-r01
+
+  iap-backup-test:
+    when: << pipeline.parameters.run-iap-backup-test >>
+    jobs:
+      - iap-backup-check:
+          context:
+            - AWS_OPENID_CONNECT_TOKENS
+            - GOOGLE_CLOUD_IAM
+          filters:
+            branches:
+              only: test/issue5505-iap-backup-r01

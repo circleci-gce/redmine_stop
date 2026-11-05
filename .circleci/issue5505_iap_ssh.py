@@ -104,6 +104,10 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 class Trial:
+    branch = BRANCH
+    key_minutes = 20
+    success_marker = "IAP_AUTHENTICATED_TRIAL=PASS"
+
     def __init__(self, work):
         self.work = Path(work)
         self.token = None
@@ -184,7 +188,7 @@ class Trial:
         self.finish_pending()
 
     def initialize(self):
-        require(os.environ.get("CIRCLECI") == "true" and os.environ.get("CIRCLE_BRANCH") == BRANCH,
+        require(os.environ.get("CIRCLECI") == "true" and os.environ.get("CIRCLE_BRANCH") == self.branch,
                 "Run only in the approved CircleCI trial branch")
         require("CLOUDSDK_AUTH_ACCESS_TOKEN" not in os.environ, "Access token override present")
         for prop in ("auth/impersonate_service_account", "auth/access_token_file",
@@ -231,7 +235,7 @@ class Trial:
              "-C", "issue5505-ci-trial"])
         kind, self.blob = Path(str(key) + ".pub").read_text().split()[:2]
         require(kind == "ssh-rsa", "Unexpected generated key type")
-        expires = dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=20)
+        expires = dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=self.key_minutes)
         expires_text = expires.strftime("%Y-%m-%dT%H:%M:%S%z")
         self.key_line = "centos:" + kind + " " + self.blob + " google-ssh " + json.dumps(
             {"userName": "centos", "expireOn": expires_text}, separators=(",", ":"))
@@ -259,7 +263,7 @@ class Trial:
             return
         raise Stop("Metadata changed repeatedly; registration aborted")
 
-    def ssh_check(self):
+    def ssh_arguments(self):
         args = ["ssh", "-F", "/dev/null", "-T", "-a", "-x", "-S", "none", "-p", "22022",
                 "-i", str(self.work / "id_rsa")]
         for option in (
@@ -272,7 +276,10 @@ class Trial:
             "ConnectTimeout=10", "ConnectionAttempts=1", "ServerAliveInterval=10", "ServerAliveCountMax=2",
         ):
             args.extend(["-o", option])
-        args.extend(["centos@127.0.0.1", "bash -s"])
+        return args + ["centos@127.0.0.1", "bash -s"]
+
+    def ssh_check(self):
+        args = self.ssh_arguments()
         for attempt in range(1, 7):
             require(self.tunnel.poll() is None, "IAP tunnel stopped")
             result = run(args, input=REMOTE_CHECK, timeout=60, check=False)
@@ -391,7 +398,7 @@ def interrupted(signum, frame):
     raise Stop("Trial interrupted by signal " + str(signum))
 
 
-def main():
+def main(trial_class=None):
     require(sys.argv[1:] == ["--run"], "Usage: issue5505_iap_ssh.py --run (CircleCI only)")
     os.environ.update(LC_ALL="C", TZ="UTC", CLOUDSDK_CORE_DISABLE_PROMPTS="1")
     os.umask(0o077)
@@ -399,7 +406,7 @@ def main():
         signal.signal(signum, interrupted)
     success = False
     with tempfile.TemporaryDirectory(prefix="issue5505-iap-ssh-") as work:
-        trial = Trial(work)
+        trial = (trial_class or Trial)(work)
         try:
             trial.initialize()
             trial.start_tunnel()
@@ -441,7 +448,7 @@ def main():
             trial.token = None
     emit("CI_TEMPORARY_FILES_REMOVED=PASS")
     if success:
-        emit("IAP_AUTHENTICATED_TRIAL=PASS")
+        emit(trial.success_marker)
     return 0 if success else 1
 
 
