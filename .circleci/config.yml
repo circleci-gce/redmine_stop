@@ -4,6 +4,9 @@ orbs:
   gcp-cli: circleci/gcp-cli@3.1.1
 
 parameters:
+  run-iap-ssh-test:
+    type: boolean
+    default: false
   run-iap-connectivity-test:
     type: boolean
     default: false
@@ -117,11 +120,46 @@ jobs:
             date -u '+%Y-%m-%dT%H:%M:%SZ'
             echo 'IAP_SSH_HOST_KEY_CHECK=PASS'
 
+  iap-authenticated-check:
+    docker:
+      - image: ghcr.io/docker-images-mamono210/circleci-executors/ansible:latest
+    environment:
+      CVE_PROJECT: buoyant-world-263612
+      CVE_ZONE: us-east1-d
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - checkout
+      - run:
+          name: Check trial branch and metadata safety tests
+          command: |
+            set -euo pipefail
+            test "$CIRCLE_BRANCH" = test/issue5505-iap-r01
+            python3 -m unittest discover -s .circleci/tests -p 'test_issue5505_iap_ssh.py'
+      - gcp-cli/setup:
+          google_project_id: CVE_PROJECT
+          google_compute_zone: CVE_ZONE
+      - run:
+          name: Verify IAP SSH, sudo and temporary key cleanup
+          no_output_timeout: 5m
+          command: |
+            set -euo pipefail
+            python3 .circleci/issue5505_iap_ssh.py --run
+
 workflows:
   iap-connectivity-test:
     when: << pipeline.parameters.run-iap-connectivity-test >>
     jobs:
       - iap-connectivity-check:
+          context:
+            - GOOGLE_CLOUD_IAM
+          filters:
+            branches:
+              only: test/issue5505-iap-r01
+
+  iap-authenticated-test:
+    when: << pipeline.parameters.run-iap-ssh-test >>
+    jobs:
+      - iap-authenticated-check:
           context:
             - GOOGLE_CLOUD_IAM
           filters:
