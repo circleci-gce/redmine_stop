@@ -14,6 +14,7 @@ import time
 import uuid
 
 import issue5505_iap_ssh as iap
+from issue5505_ansible_diagnostics import check_modules
 
 BRANCH = "test/issue5505-iap-backup-r01"
 BUCKET = "mamono210"
@@ -160,13 +161,8 @@ class BackupTrial(iap.Trial):
             actual = iap.run(["git", "-C", str(destination), "rev-parse", "HEAD"]).stdout.strip()
             iap.require(actual == source["commit"], "Dependency commit mismatch")
         # No remote package installation. Check that the executor has both modules.
-        modules = json.loads(iap.run(["ansible-doc", "-t", "module", "--json",
-            "community.general.archive", "amazon.aws.s3_object"], timeout=self.remaining()).stdout)
-        iap.require("community.general.archive" in modules and "amazon.aws.s3_object" in modules,
-                    "Required Ansible collection missing")
-        options = modules["amazon.aws.s3_object"]["doc"]["options"]
-        iap.require("expected_bucket_owner" in options, "Installed S3 module lacks the owner check")
-        iap.emit(iap.run(["ansible", "--version"]).stdout.rstrip())
+        iap.require(check_modules(timeout=self.remaining()),
+                    "Ansible dependency check failed; see ANSIBLE_PROBE diagnostics above")
         self.prepare_ansible_files()
         self.syntax_check()
         iap.emit("PINNED_DEPENDENCIES_READY=PASS")

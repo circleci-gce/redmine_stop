@@ -5,6 +5,9 @@ orbs:
   gcp-cli: circleci/gcp-cli@3.1.1
 
 parameters:
+  run-iap-ansible-diagnostics:
+    type: boolean
+    default: false
   run-iap-backup-test:
     type: boolean
     default: false
@@ -16,6 +19,26 @@ parameters:
     default: false
 
 jobs:
+  iap-ansible-diagnostics:
+    docker:
+      - image: ghcr.io/docker-images-mamono210/circleci-executors/ansible:latest
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - checkout
+      - run:
+          name: Check diagnostic branch and offline tests
+          command: |
+            set -euo pipefail
+            test "$CIRCLE_BRANCH" = test/issue5505-iap-backup-r01
+            python3 -m unittest discover -s .circleci/tests -p 'test_issue5505_*.py'
+      - run:
+          name: Diagnose Ansible modules without connecting to the VM
+          no_output_timeout: 5m
+          command: |
+            set -euo pipefail
+            python3 .circleci/issue5505_ansible_diagnostics.py
+
   iap-connectivity-check:
     docker:
       - image: ghcr.io/docker-images-mamono210/circleci-executors/ansible:latest
@@ -180,6 +203,14 @@ jobs:
             python3 .circleci/issue5505_iap_backup.py --run
 
 workflows:
+  iap-ansible-diagnostics:
+    when: << pipeline.parameters.run-iap-ansible-diagnostics >>
+    jobs:
+      - iap-ansible-diagnostics:
+          filters:
+            branches:
+              only: test/issue5505-iap-backup-r01
+
   iap-connectivity-test:
     when: << pipeline.parameters.run-iap-connectivity-test >>
     jobs:

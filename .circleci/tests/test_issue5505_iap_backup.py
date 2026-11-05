@@ -111,6 +111,27 @@ class BackupSafetyTests(unittest.TestCase):
                 trial.initialize()
             aws.assert_not_called()
 
+    def test_failed_doc_check_stops_before_gcp_initialization_or_backup(self):
+        trial = b.BackupTrial(self.work)
+        caller = {"Account": b.OWNER, "Arn": "arn:aws:sts::808683561341:assumed-role/"
+                  "CircleCI_OIDC_circleci-gce/offline-test"}
+        source = Mock()
+        source.read_text.return_value = json.dumps({"version": 1, "sources": []})
+        with patch.dict(os.environ, {"CIRCLECI": "true", "CIRCLE_BRANCH": b.BRANCH,
+                                     "CIRCLE_BUILD_NUM": "733", "AWS_ROLE_ARN": b.AWS_ROLE,
+                                     "AWS_ACCESS_KEY_ID": "synthetic", "AWS_SECRET_ACCESS_KEY": "synthetic",
+                                     "AWS_SESSION_TOKEN": "synthetic"}, clear=True), \
+                patch.object(b, "SOURCE_FILE", source), \
+                patch.object(trial, "aws", side_effect=[json.dumps(caller), '{"KeyCount": 0}']), \
+                patch.object(b, "check_modules", return_value=False), \
+                patch.object(iap.Trial, "initialize") as cloud, \
+                patch.object(trial, "run_playbook") as play:
+            with self.assertRaisesRegex(iap.Stop, "Ansible dependency check failed"):
+                trial.initialize()
+            cloud.assert_not_called()
+            play.assert_not_called()
+            self.assertFalse(trial.attempted)
+
     def test_syntax_check_uses_same_private_config_and_fails_closed(self):
         trial = b.BackupTrial(self.work)
         trial.deps = self.work / "deps"
