@@ -1,4 +1,5 @@
 version: 2.1
+
 orbs:
   aws-cli: circleci/aws-cli@3.1.4
   gcp-cli: circleci/gcp-cli@3.1.1
@@ -7,155 +8,70 @@ parameters:
   instance-name:
     type: string
     default: ""
+  zone:
+    type: string
+    default: ""
+  # Keep the previous API shape. Production uses installed packages only.
   pip-executable:
     type: string
     default: ""
   pip-package:
     type: string
     default: ""
-  zone:
-    type: string
-    default: ""
 
 jobs:
+  check-code:
+    docker:
+      - image: ghcr.io/docker-images-mamono210/circleci-executors/ansible:latest
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - checkout
+      - run:
+          name: Run offline backup and stop safety tests
+          command: |
+            set -euo pipefail
+            python3 -m unittest discover -s .circleci/tests -p 'test_*.py'
+
   build:
     docker:
       - image: ghcr.io/docker-images-mamono210/circleci-executors/ansible:latest
-
+    environment:
+      CVE_PROJECT: buoyant-world-263612
+      CVE_ZONE: us-east1-d
+      REDMINE_INSTANCE: << pipeline.parameters.instance-name >>
+      REDMINE_ZONE: << pipeline.parameters.zone >>
+      PYTHONDONTWRITEBYTECODE: "1"
+      CLOUDSDK_CORE_DISABLE_PROMPTS: "1"
     steps:
       - checkout
+      - run:
+          name: Verify production branch and target parameters
+          command: python3 .circleci/redmine_stop.py --check
       - aws-cli/setup:
           profile-name: default
           role-arn: ${AWS_ROLE_ARN}
           role-session-name: CircleCI_circleci-gce_redmine-stop
           session-duration: "3600"
-      - gcp-cli/setup
-
+      - gcp-cli/setup:
+          google_project_id: CVE_PROJECT
+          google_compute_zone: CVE_ZONE
       - run:
-          name: Show Ansible version
-          command: |
-            ansible --version
-            ansible-community --version
-
-      - run:
-          name: Create SSH Key
-          command: |
-            gcloud compute ssh centos@<< pipeline.parameters.instance-name >> \
-              --command "cat /etc/redhat-release" \
-              --zone=<< pipeline.parameters.zone >> \
-              --quiet
-
-      - run:
-          name: Prepare connection info (ip_addr) once
-          command: |
-            # Set Strict host key checking no (once)
-            mkdir -p ~/.ssh
-            echo "StrictHostKeyChecking no" > ~/.ssh/config
-
-            # Get external Ip addr (once)
-            ip_addr=$(
-              gcloud compute instances describe << pipeline.parameters.instance-name >> \
-                --format='get(networkInterfaces[0].accessConfigs[0].natIP)' \
-                --zone=<< pipeline.parameters.zone >>
-            )
-
-            # Persist for later steps
-            echo "${ip_addr}" > /tmp/ip_addr
-            echo "ip_addr=${ip_addr}"
-
-      - run:
-          name: Create Redmine backup data
-          command: |
-            ip_addr="$(cat /tmp/ip_addr)"
-
-            # Retrieve Ansible playbook
-            git clone https://github.com/ansible-playbooks-mamono210/redmine_create-backup.git
-
-            # Install dependencies
-            cd redmine_create-backup
-            ansible-galaxy install -r roles/requirements.yml
-
-            # Execute Ansible playbook
-            ansible-playbook -i ${ip_addr}, \
-              -u centos \
-              --key-file="~/.ssh/google_compute_engine" \
-              create-backup.yml
-          no_output_timeout: 30m
-
-      - run:
-          name: Prepare S3 upload playbook (once)
-          command: |
-            # Retrieve Ansible playbook
-            git clone https://github.com/ansible-playbooks-mamono210/aws-s3.git
-
-            # Install dependencies
-            cd aws-s3
-            ansible-galaxy install -r roles/requirements.yml
-
-      - run:
-          name: Upload archived media file to S3
-          command: |
-            ip_addr="$(cat /tmp/ip_addr)"
-            cd aws-s3
-
-            ansible-playbook -i ${ip_addr}, \
-              -u centos \
-              --key-file="~/.ssh/google_compute_engine" \
-              -e "pip_executable=<< pipeline.parameters.pip-executable >>" \
-              -e "pip_package=<< pipeline.parameters.pip-package >>" \
-              -e "s3_bucket=mamono210" \
-              -e "s3_object_name=circleci-gce/redmine/stop/files.tar.gz" \
-              -e "upload_file_path=/tmp/redmine-backup/files.tar.gz" \
-              put.yml
-          no_output_timeout: 30m
-
-      - run:
-          name: Upload archived git file to S3
-          command: |
-            ip_addr="$(cat /tmp/ip_addr)"
-            cd aws-s3
-
-            ansible-playbook -i ${ip_addr}, \
-              -u centos \
-              --key-file="~/.ssh/google_compute_engine" \
-              -e "pip_executable=<< pipeline.parameters.pip-executable >>" \
-              -e "pip_package=<< pipeline.parameters.pip-package >>" \
-              -e "s3_bucket=mamono210" \
-              -e "s3_object_name=circleci-gce/redmine/stop/git.tar.gz" \
-              -e "skip_bootstrap=true" \
-              -e "upload_file_path=/tmp/redmine-backup/git.tar.gz" \
-              put.yml
-          no_output_timeout: 30m
-
-      - run:
-          name: Upload archived PostgreSQL dump to S3
-          command: |
-            ip_addr="$(cat /tmp/ip_addr)"
-            cd aws-s3
-
-            ansible-playbook -i ${ip_addr}, \
-              -u centos \
-              --key-file="~/.ssh/google_compute_engine" \
-              -e "pip_executable=<< pipeline.parameters.pip-executable >>" \
-              -e "pip_package=<< pipeline.parameters.pip-package >>" \
-              -e "s3_bucket=mamono210" \
-              -e "s3_object_name=circleci-gce/redmine/stop/redmine.sql" \
-              -e "skip_bootstrap=true" \
-              -e "upload_file_path=/tmp/redmine-backup/redmine.sql" \
-              put.yml
-          no_output_timeout: 30m
-
-      - run:
-          name: Stop instance
-          command: |
-            gcloud compute instances stop << pipeline.parameters.instance-name >> \
-              --zone=<< pipeline.parameters.zone >>
+          name: Back up through IAP, verify S3 and cleanup, then stop the VM
+          no_output_timeout: 10m
+          command: python3 .circleci/redmine_stop.py --run
 
 workflows:
-  version: 2
   stop-redmine:
     jobs:
+      - check-code
       - build:
+          requires:
+            - check-code
+          serial-group: buoyant-world-263612/us-east1-d/redmica2-south-carolina/backup-stop
           context:
             - AWS_OPENID_CONNECT_TOKENS
             - GOOGLE_CLOUD_IAM
+          filters:
+            branches:
+              only: main

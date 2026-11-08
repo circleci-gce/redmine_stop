@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "sources": [
+    {
+      "path": "playbooks/backup",
+      "url": "https://github.com/ansible-playbooks-mamono210/redmine_create-backup.git",
+      "commit": "e06cbac89308f4d7ab001a03a453f11b1e4b4c47"
+    },
+    {
+      "path": "roles/mamono210.redmine_backup_files",
+      "url": "https://github.com/ansible-roles-mamono210/redmine_backup_files.git",
+      "commit": "ce5272838533e4b73623d18f55734d97e13909f6"
+    },
+    {
+      "path": "roles/mamono210.redmine_backup_git",
+      "url": "https://github.com/ansible-roles-mamono210/redmine_backup_git.git",
+      "commit": "368c383fb732bee0864defd3ca013e855dadd149"
+    },
+    {
+      "path": "roles/mamono210.redmine_backup_postgresql",
+      "url": "https://github.com/ansible-roles-mamono210/redmine_backup_postgresql.git",
+      "commit": "57735b73a2b54538a73da3154e21d5c57df38a20"
+    },
+    {
+      "path": "roles/mamono210.redmine_facts",
+      "url": "https://github.com/ansible-roles-mamono210/redmine_facts.git",
+      "commit": "0efe1db69866d7107e66e7ac9369342db04aac7f"
+    },
+    {
+      "path": "roles/mamono210.aws_s3_cp",
+      "url": "https://github.com/ansible-roles-mamono210/aws_s3_cp.git",
+      "commit": "52ab73d9653fd459b91f5cd96ca2683b6f52c33e"
+    }
+  ]
+}
