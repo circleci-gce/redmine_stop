@@ -1,5 +1,9 @@
 # Issue 5505: IAP 経由のバックアップ試験
 
+> この文書は試験版 `11719dbe00f875bc1869198e6ad2de836edb4bd5` の記録です。
+> #5515 の通常運用設定では、以下の試験用 pipeline parameter / workflow は使用しません。
+> 現在の起動条件・停止条件・移行手順は [redmine-iap-operation.md](redmine-iap-operation.md) を参照してください。
+
 この設定は準備用。実機試験は、人間が対象コミットを確認して手動起動する。
 
 ## Ansible 事前確認の診断

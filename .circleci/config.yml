@@ -5,21 +5,22 @@ orbs:
   gcp-cli: circleci/gcp-cli@3.1.1
 
 parameters:
-  run-iap-ansible-diagnostics:
-    type: boolean
-    default: false
-  run-iap-backup-test:
-    type: boolean
-    default: false
-  run-iap-ssh-test:
-    type: boolean
-    default: false
-  run-iap-connectivity-test:
-    type: boolean
-    default: false
+  instance-name:
+    type: string
+    default: ""
+  zone:
+    type: string
+    default: ""
+  # Keep the previous API shape. Production uses installed packages only.
+  pip-executable:
+    type: string
+    default: ""
+  pip-package:
+    type: string
+    default: ""
 
 jobs:
-  iap-ansible-diagnostics:
+  check-code:
     docker:
       - image: ghcr.io/docker-images-mamono210/circleci-executors/ansible:latest
     environment:
@@ -27,217 +28,50 @@ jobs:
     steps:
       - checkout
       - run:
-          name: Check diagnostic branch and offline tests
+          name: Run offline backup and stop safety tests
           command: |
             set -euo pipefail
-            test "$CIRCLE_BRANCH" = test/issue5505-iap-backup-r01
-            python3 -m unittest discover -s .circleci/tests -p 'test_issue5505_*.py'
-      - run:
-          name: Diagnose Ansible modules without connecting to the VM
-          no_output_timeout: 5m
-          command: |
-            set -euo pipefail
-            python3 .circleci/issue5505_ansible_diagnostics.py
+            python3 -m unittest discover -s .circleci/tests -p 'test_*.py'
 
-  iap-connectivity-check:
+  build:
     docker:
       - image: ghcr.io/docker-images-mamono210/circleci-executors/ansible:latest
     environment:
       CVE_PROJECT: buoyant-world-263612
       CVE_ZONE: us-east1-d
-      CVE_INSTANCE: redmica2-south-carolina
-    steps:
-      - checkout
-      - run:
-          name: Check trial branch
-          command: |
-            set -euo pipefail
-            test "$CIRCLE_BRANCH" = test/issue5505-iap-r01
-      - gcp-cli/setup:
-          google_project_id: CVE_PROJECT
-          google_compute_zone: CVE_ZONE
-      - run:
-          name: Verify CI identity and IAP SSH endpoint
-          no_output_timeout: 5m
-          command: |
-            set -euo pipefail
-            export LC_ALL=C
-            export TZ=UTC
-            export CLOUDSDK_CORE_DISABLE_PROMPTS=1
-            umask 077
-
-            for cve_cmd in gcloud ssh-keyscan ssh-keygen; do
-              command -v "$cve_cmd" >/dev/null
-            done
-
-            cve_account=circleci-circleci-gce-23011-16@buoyant-world-263612.iam.gserviceaccount.com
-            test "$(gcloud auth list --filter=status:ACTIVE --format='value(account)')" = "$cve_account"
-
-            if [ "${CLOUDSDK_AUTH_ACCESS_TOKEN+x}" = x ]; then
-              echo 'STOP: An access token override is present.'
-              exit 1
-            fi
-            for cve_property in auth/impersonate_service_account auth/access_token_file auth/credential_file_override; do
-              cve_value="$(gcloud config get "$cve_property")"
-              case "$cve_value" in
-                ""|"(unset)") ;;
-                *) echo 'STOP: An authentication override is present.'; exit 1 ;;
-              esac
-            done
-            unset cve_value
-            echo 'CI_GCP_IDENTITY_CHECK=PASS'
-
-            cve_describe() {
-              gcloud compute instances describe "$CVE_INSTANCE" \
-                --account="$cve_account" \
-                --project="$CVE_PROJECT" --zone="$CVE_ZONE" "$@"
-            }
-            test "$(cve_describe --format='value(id)')" = 7213092591087619377
-            test "$(cve_describe --format='value(status)')" = RUNNING
-            echo 'TARGET_INSTANCE_CHECK=PASS'
-
-            cve_work="$(mktemp -d)"
-            PYTHONUNBUFFERED=1 gcloud compute start-iap-tunnel "$CVE_INSTANCE" 22 \
-              --account="$cve_account" \
-              --project="$CVE_PROJECT" --zone="$CVE_ZONE" \
-              --local-host-port=127.0.0.1:22022 \
-              > "$cve_work/tunnel.log" 2>&1 &
-            cve_pid=$!
-            cve_cleanup() {
-              kill "$cve_pid" 2>/dev/null || true
-              wait "$cve_pid" 2>/dev/null || true
-            }
-            trap cve_cleanup EXIT
-            trap 'exit 130' INT
-            trap 'exit 143' TERM
-
-            cve_ready=false
-            for ((cve_try=0; cve_try<60; cve_try++)); do
-              if ! kill -0 "$cve_pid" 2>/dev/null; then
-                cat "$cve_work/tunnel.log"
-                echo 'STOP: IAP tunnel exited.'
-                exit 1
-              fi
-              if grep -Fq 'Listening on port [22022].' "$cve_work/tunnel.log"; then
-                cve_ready=true
-                break
-              fi
-              sleep 1
-            done
-            if [ "$cve_ready" != true ]; then
-              cat "$cve_work/tunnel.log"
-              echo 'STOP: IAP tunnel did not become ready.'
-              exit 1
-            fi
-            echo 'IAP_TUNNEL_READY=PASS'
-
-            if ! ssh-keyscan -4 -T 15 -p 22022 -t ed25519 127.0.0.1 \
-              > "$cve_work/host-key.pub" 2> "$cve_work/keyscan.log"; then
-              cat "$cve_work/keyscan.log"
-              echo 'STOP: SSH host key collection failed.'
-              exit 1
-            fi
-            cve_fp="$(ssh-keygen -E sha256 -lf "$cve_work/host-key.pub" | awk '{print $2}')"
-            printf 'HOST_KEY_FINGERPRINT=%s\n' "$cve_fp"
-            if [ "$cve_fp" != SHA256:giY6WNa9vKQr7EY/IG79NMqfqa4KRACl9mv6KzJe5XI ]; then
-              echo 'STOP: SSH host key fingerprint does not match.'
-              exit 1
-            fi
-            kill -0 "$cve_pid"
-            date -u '+%Y-%m-%dT%H:%M:%SZ'
-            echo 'IAP_SSH_HOST_KEY_CHECK=PASS'
-
-  iap-authenticated-check:
-    docker:
-      - image: ghcr.io/docker-images-mamono210/circleci-executors/ansible:latest
-    environment:
-      CVE_PROJECT: buoyant-world-263612
-      CVE_ZONE: us-east1-d
+      REDMINE_INSTANCE: << pipeline.parameters.instance-name >>
+      REDMINE_ZONE: << pipeline.parameters.zone >>
       PYTHONDONTWRITEBYTECODE: "1"
+      CLOUDSDK_CORE_DISABLE_PROMPTS: "1"
     steps:
       - checkout
       - run:
-          name: Check trial branch and metadata safety tests
-          command: |
-            set -euo pipefail
-            test "$CIRCLE_BRANCH" = test/issue5505-iap-r01
-            python3 -m unittest discover -s .circleci/tests -p 'test_issue5505_iap_ssh.py'
-      - gcp-cli/setup:
-          google_project_id: CVE_PROJECT
-          google_compute_zone: CVE_ZONE
-      - run:
-          name: Verify IAP SSH, sudo and temporary key cleanup
-          no_output_timeout: 5m
-          command: |
-            set -euo pipefail
-            python3 .circleci/issue5505_iap_ssh.py --run
-
-  iap-backup-check:
-    docker:
-      - image: ghcr.io/docker-images-mamono210/circleci-executors/ansible:latest
-    environment:
-      CVE_PROJECT: buoyant-world-263612
-      CVE_ZONE: us-east1-d
-      PYTHONDONTWRITEBYTECODE: "1"
-    steps:
-      - checkout
-      - run:
-          name: Check backup trial branch and offline tests
-          command: |
-            set -euo pipefail
-            test "$CIRCLE_BRANCH" = test/issue5505-iap-backup-r01
-            python3 -m unittest discover -s .circleci/tests -p 'test_issue5505_*.py'
+          name: Verify production branch and target parameters
+          command: python3 .circleci/redmine_stop.py --check
       - aws-cli/setup:
           profile-name: default
           role-arn: ${AWS_ROLE_ARN}
-          role-session-name: CircleCI_issue5505_iap_backup
+          role-session-name: CircleCI_circleci-gce_redmine-stop
           session-duration: "3600"
       - gcp-cli/setup:
           google_project_id: CVE_PROJECT
           google_compute_zone: CVE_ZONE
       - run:
-          name: IAP backup, S3 verification and temporary key cleanup
-          no_output_timeout: 5m
-          command: |
-            set -euo pipefail
-            python3 .circleci/issue5505_iap_backup.py --run
+          name: Back up through IAP, verify S3 and cleanup, then stop the VM
+          no_output_timeout: 10m
+          command: python3 .circleci/redmine_stop.py --run
 
 workflows:
-  iap-ansible-diagnostics:
-    when: << pipeline.parameters.run-iap-ansible-diagnostics >>
+  stop-redmine:
     jobs:
-      - iap-ansible-diagnostics:
-          filters:
-            branches:
-              only: test/issue5505-iap-backup-r01
-
-  iap-connectivity-test:
-    when: << pipeline.parameters.run-iap-connectivity-test >>
-    jobs:
-      - iap-connectivity-check:
-          context:
-            - GOOGLE_CLOUD_IAM
-          filters:
-            branches:
-              only: test/issue5505-iap-r01
-
-  iap-authenticated-test:
-    when: << pipeline.parameters.run-iap-ssh-test >>
-    jobs:
-      - iap-authenticated-check:
-          context:
-            - GOOGLE_CLOUD_IAM
-          filters:
-            branches:
-              only: test/issue5505-iap-r01
-
-  iap-backup-test:
-    when: << pipeline.parameters.run-iap-backup-test >>
-    jobs:
-      - iap-backup-check:
+      - check-code
+      - build:
+          requires:
+            - check-code
+          serial-group: buoyant-world-263612/us-east1-d/redmica2-south-carolina/backup-stop
           context:
             - AWS_OPENID_CONNECT_TOKENS
             - GOOGLE_CLOUD_IAM
           filters:
             branches:
-              only: test/issue5505-iap-backup-r01
+              only: main

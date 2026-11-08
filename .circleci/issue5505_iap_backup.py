@@ -123,6 +123,11 @@ class BackupTrial(iap.Trial):
         iap.require(caller.get("Account") == OWNER and caller.get("Arn", "").startswith(
             "arn:aws:sts::808683561341:assumed-role/CircleCI_OIDC_circleci-gce/"), "Unexpected AWS caller")
         iap.emit("AWS_ROLE_CHECK=PASS")
+        self.prepare_destination()
+        self.prepare_dependencies()
+        super().initialize()
+
+    def prepare_destination(self):
         build = os.environ.get("CIRCLE_BUILD_NUM", "")
         iap.require(build.isdigit(), "Missing CircleCI build number")
         self.prefix = PREFIX_ROOT + dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -133,8 +138,19 @@ class BackupTrial(iap.Trial):
             "--prefix", self.prefix + "/", "--max-keys", "1", "--no-paginate", "--output", "json"]))
         iap.require(listing.get("KeyCount") == 0 and not listing.get("Contents"), "S3 trial prefix is not empty")
         iap.emit("S3_NEW_PREFIX_CHECK=PASS")
-        self.prepare_dependencies()
-        super().initialize()
+
+    def build_upload_play(self):
+        return upload_play()
+
+    def read_saved_object(self, name):
+        return json.loads(self.aws([
+            "s3api", "head-object", "--bucket", BUCKET, "--expected-bucket-owner", OWNER,
+            "--key", self.prefix + "/" + name, "--query",
+            "{Size:ContentLength,LastModified:LastModified,Encryption:ServerSideEncryption,VersionId:VersionId}",
+            "--output", "json"]))
+
+    def validate_saved_objects(self, sizes, objects):
+        validate_objects(sizes, objects)
 
     def prepare_dependencies(self):
         lock = json.loads(SOURCE_FILE.read_text())
@@ -178,7 +194,7 @@ class BackupTrial(iap.Trial):
 
     def prepare_ansible_files(self):
         (self.work / "inventory.json").write_text(json.dumps(inventory(self.work)))
-        (self.work / "upload.json").write_text(json.dumps(upload_play()))
+        (self.work / "upload.json").write_text(json.dumps(self.build_upload_play()))
         (self.work / "ansible.cfg").write_text(
             "[defaults]\nno_log = true\nhost_key_checking = true\nstdout_callback = default\n"
             "display_args_to_stdout = false\nretry_files_enabled = false\n"
@@ -261,12 +277,8 @@ class BackupTrial(iap.Trial):
         self.run_playbook(self.work / "upload.json", {"trial_s3_prefix": self.prefix}, "S3_UPLOAD")
         objects = {}
         for name in FILES:
-            objects[name] = json.loads(self.aws([
-                "s3api", "head-object", "--bucket", BUCKET, "--expected-bucket-owner", OWNER,
-                "--key", self.prefix + "/" + name, "--query",
-                "{Size:ContentLength,LastModified:LastModified,Encryption:ServerSideEncryption,VersionId:VersionId}",
-                "--output", "json"]))
-        validate_objects(sizes, objects)
+            objects[name] = self.read_saved_object(name)
+        self.validate_saved_objects(sizes, objects)
         iap.emit("S3_VERIFIED_OBJECTS=" + json.dumps(objects, sort_keys=True))
         iap.emit("S3_SIZE_AND_ENCRYPTION_CHECK=PASS")
         iap.require(json.loads(self.remote(FILE_STATS)) == files, "VM backup files changed during upload")
